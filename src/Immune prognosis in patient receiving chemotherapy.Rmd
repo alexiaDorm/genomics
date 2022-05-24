@@ -1,0 +1,194 @@
+---
+title: "Immune prognosis"
+---
+
+Define ER and HER metagene for status determination and immune metagene to be refined. Load data.
+```{r}
+load(file = '../data/Chemo.rda')
+
+data <- chemo_normalized
+expression <- as.data.frame(t(exprs(data)))
+
+outcome <- chemo_normalized$t.dmfs.norm.years
+expression$DMFSVal <- outcome
+expression$DMFSVal[expression$DMFSVal > 5] <- 5 
+outcome[outcome <= 5] <- T; outcome[outcome > 5] <- F
+expression$DMFS <- outcome
+expression$pcr <- chemo_normalized$pCR
+
+#As binary Node pos vs neg
+node <- chemo_normalized$node
+#node[node == "N0"] <- F; node[node == "N1"] <- T; node[node == "N2"] <- T; node[node == "N3"] <- T;
+expression$node <- node
+
+#As binary grade III vs grade I and II
+grade <- chemo_normalized$grade
+grade[grade == 1] <- F; grade[grade == 2]  <- F; grade[grade == 3] <- T;
+expression$grade <- grade
+
+#As binary age > 50 vs age <= 50
+age <- chemo_normalized$age
+age[age <= 50] <- F; age[age > 50] <- T;
+expression$age <- age
+
+expression$study <- chemo_normalized$StudyID
+expression <-  rbind(expression[expression$study == "GSE41998",],expression[expression$study == "GSE16446",], expression[expression$study == "E_MTAB_365",])
+dim(expression)
+#expression <- na.omit(expression)
+
+(unique(expression$node)[2])
+
+```
+Find ER/HER status. Define ER-HER- and HER2+ expression set. Load specific studies. 
+```{r}
+CTM <- c("CXCL13","PRF1", "IRF1", "IKZF1", "GZMB", "HLA-E", "DMFSVal", "DMFS","pcr")
+
+ER_metagene <- c("CCDC170", "ESR1", "ABAT", "SLC39A6", "GATA3", "SCUBE2")
+HER_metagene <- c("ERBB2", "PGAP3", "STARD3", "GRB7", "PNMT", "PSMD3", "GSDMB", "RPL19", "FGFR4", "CAP1")
+threshold_ER <- 7.5
+threshold_HER <- 8.35
+
+mean_ER <- rowMeans(expression[, ER_metagene])
+mean_HER <- rowMeans(expression[, HER_metagene])
+
+ER_status <- mean_ER
+ER_status[mean_ER > threshold_ER] <- T; ER_status[mean_ER <= threshold_ER] <- F
+HER_status <- mean_HER
+HER_status[mean_HER > threshold_HER] <- T; HER_status[mean_HER <= threshold_HER] <- F
+
+samples_doubleneg <- names(ER_status[(ER_status + HER_status) == 0])
+exp_doubleneg <- data.frame(expression[samples_doubleneg, CTM])
+samples_HERpos <- names(HER_status[HER_status == 1])
+exp_HERpos <- expression[samples_HERpos, CTM]
+
+dim(exp_doubleneg); dim(exp_HERpos)
+```
+
+Assign low, medium, high expression of CTM
+```{r}
+CTM <- c("CXCL13","PRF1", "IRF1", "IKZF1", "GZMB", "HLA.E")
+
+exp_doubleneg$sum <- rowMeans(exp_doubleneg[,CTM])
+tert = quantile(exp_doubleneg$sum, c(0:3/3))
+exp_doubleneg$group = with(exp_doubleneg, cut(sum, tert, include.lowest = T, labels = c("Low", "Medium", "High")))
+
+names(exp_HERpos)[names(exp_HERpos) == "HLA-E"] <- "HLA.E"
+exp_HERpos$sum <- rowMeans(exp_HERpos[,CTM])
+tert = quantile(exp_HERpos$sum, c(0:3/3))
+exp_HERpos$group = with(exp_HERpos, cut(sum, tert, include.lowest = T, labels = c("Low", "Medium", "High")))
+
+```
+
+Logistic regression, compute odd ratio, ect.. Coeff return by log regression is the log of the odd. -> odd = exp(coeff) Confidence intreval also exp ???
+```{r}
+logis_doubleneg <-glm(pcr ~ group, family=binomial, data=exp_doubleneg)
+summary(logis_doubleneg)
+confint(logis_doubleneg)
+```
+
+```{r}
+logis_HERpos <-glm(pcr ~ group, family=binomial, data=exp_HERpos)
+summary(logis_HERpos)
+confint(logis_HERpos)
+```
+```{r}
+compute_DMFS <- function(exp,DMFS){
+    
+  exp$event <- DMFS$event
+  #Compute percentage DMFS for each group
+  DMFS.low <- (sum(exp[exp$group == "Low",]$event)/length(exp[exp$group == "Low",]$event))
+  DMFS.medium <- (sum(exp[exp$group == "Medium",]$event)/length(exp[exp$group == "Medium",]$event))
+  DMFS.high <- (sum(exp[exp$group == "High",]$event)/length(exp[exp$group == "High",]$event))
+  
+  DMFS.groups <- c(DMFS.low,DMFS.medium,DMFS.high)
+  DMFS.groups <- 1- DMFS.groups 
+  DMFS.groups[is.na(DMFS.groups)] <- 0
+  
+  return (DMFS.groups)
+}
+```
+
+Define and test the consensus T-cell related metagene for double negative and HER+
+```{r}
+CTM <- c("CXCL13","PRF1", "IRF1", "IKZF1", "GZMB", "HLA.E")
+all_data <- rbind(exp_doubleneg,exp_HERpos)
+
+#Find tertiles, assign low,medium,high to each group
+all_data$sum <- rowMeans(all_data[,CTM])
+tert = quantile(all_data$sum, c(0:3/3))
+all_data$group = with(all_data, cut(sum, tert, include.lowest = T, labels = c("Low", "Medium", "High")))
+
+DMFS <- data.frame(all_data$DMFS, row.names = rownames(all_data)); colnames(DMFS) <- "event"
+DMFS.Val <- data.frame(all_data$DMFSVal, row.names = rownames(all_data)); colnames(DMFS.Val) <- 'time'
+  
+#Compute percentage DMFS for each group
+DMFS.groups <- compute_DMFS(all_data,DMFS)
+
+#log-rank test
+DMFS <- data.frame(all_data$DMFS, row.names = rownames(all_data))
+DMFS.Val <- data.frame(all_data$DMFSVal, row.names = rownames(all_data))
+fit <- survfit(Surv(DMFSVal, DMFS)~ group, data = all_data)
+print(autoplot(fit))
+surv_diff <- survdiff(Surv(DMFSVal, DMFS)~ group, data = all_data)
+p_value <- 1 - pchisq(surv_diff$chisq, length(surv_diff$n)-1, lower.tail = TRUE)
+
+print(p_value)
+print(DMFS.groups)
+```
+
+Only double_neg
+```{r}
+CTM <- c("CXCL13","PRF1", "IRF1", "IKZF1", "GZMB", "HLA.E")
+all_data <- exp_doubleneg
+
+#Find tertiles, assign low,medium,high to each group
+all_data$sum <- rowMeans(all_data[,CTM])
+tert = quantile(all_data$sum, c(0:3/3))
+all_data$group = with(all_data, cut(sum, tert, include.lowest = T, labels = c("Low", "Medium", "High")))
+
+DMFS <- data.frame(all_data$DMFS, row.names = rownames(all_data)); colnames(DMFS) <- "event"
+DMFS.Val <- data.frame(all_data$DMFSVal, row.names = rownames(all_data)); colnames(DMFS.Val) <- 'time'
+  
+#Compute percentage DMFS for each group
+DMFS.groups <- compute_DMFS(all_data,DMFS)
+
+#log-rank test
+DMFS <- data.frame(all_data$DMFS, row.names = rownames(all_data))
+DMFS.Val <- data.frame(all_data$DMFSVal, row.names = rownames(all_data))
+fit <- survfit(Surv(DMFSVal, DMFS)~ group, data = all_data)
+print(autoplot(fit))
+surv_diff <- survdiff(Surv(DMFSVal, DMFS)~ group, data = all_data)
+p_value <- 1 - pchisq(surv_diff$chisq, length(surv_diff$n)-1, lower.tail = TRUE)
+
+print(p_value)
+print(DMFS.groups)
+```
+
+Only HER+
+```{r}
+CTM <- c("CXCL13","PRF1", "IRF1", "IKZF1", "GZMB", "HLA.E")
+names(exp_HERpos)[names(exp_HERpos) == "HLA-E"] <- "HLA.E"
+all_data <- exp_HERpos
+
+#Find tertiles, assign low,medium,high to each group
+all_data$sum <- rowMeans(all_data[,CTM])
+tert = quantile(all_data$sum, c(0:3/3))
+all_data$group = with(all_data, cut(sum, tert, include.lowest = T, labels = c("Low", "Medium", "High")))
+
+DMFS <- data.frame(all_data$DMFS, row.names = rownames(all_data)); colnames(DMFS) <- "event"
+DMFS.Val <- data.frame(all_data$DMFSVal, row.names = rownames(all_data)); colnames(DMFS.Val) <- 'time'
+  
+#Compute percentage DMFS for each group
+DMFS.groups <- compute_DMFS(all_data,DMFS)
+
+#log-rank test
+DMFS <- data.frame(all_data$DMFS, row.names = rownames(all_data))
+DMFS.Val <- data.frame(all_data$DMFSVal, row.names = rownames(all_data))
+fit <- survfit(Surv(DMFSVal, DMFS)~ group, data = all_data)
+print(autoplot(fit))
+surv_diff <- survdiff(Surv(DMFSVal, DMFS)~ group, data = all_data)
+p_value <- 1 - pchisq(surv_diff$chisq, length(surv_diff$n)-1, lower.tail = TRUE)
+
+print(p_value)
+print(DMFS.groups)
+```

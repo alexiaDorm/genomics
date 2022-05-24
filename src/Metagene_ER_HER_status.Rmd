@@ -1,0 +1,50 @@
+---
+title: "Prediction ER and metagene status"
+output: html_notebook
+---
+
+Define metagenes for ER and HER status from paper
+```{r}
+ER_metagene <- c("CCDC170", "ESR1", "ABAT", "SLC39A6", "GATA3", "SCUBE2")
+HER_metagene <- c("ERBB2", "PGAP3", "STARD3", "GRB7", "PNMT", "PSMD3", "GSDMB", "RPL19", "FGFR4", "CAP1")
+threshold_ER <- 7.5
+threshold_HER <- 8.35
+```
+
+Derive the metagene for for ER status.
+Plot the density of the ER status metagene 
+```{r}
+data <- generic_normalized
+expression <- data.frame(t(exprs(data)))
+expression$sumERgenes <- (rowMeans(expression[,ER_metagene]))
+
+library(ggplot2)
+p <- ggplot(expression, aes(x=sumERgenes)) + 
+  geom_density()
+
+p
+
+```
+
+ER status metagene determination
+Determine threshold for prediction Rank the genes by AUC
+```{r}
+library("pROC")
+#Only keep data in generic with defined ER status
+ER_data <- expression
+  
+#Compute density of I for each gene and determine threshold
+#Predict using ER status using threshold and compute AUC
+for (col in colnames(ER_data))
+{
+  
+  pred <- ER_data$col
+  #Compute AUC
+  roc.gene <- roc(ER_data$ERstatus, pred)
+  auc.gene$col <- (roc.gene)
+
+}
+#Rank gene according by AUC
+
+```
+
