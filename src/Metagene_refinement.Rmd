@@ -69,13 +69,14 @@ univariate_Cox <- function(test_data, genes){
   return (ranked_genes)
 }
 
-compute_DMFS <- function(exp,DMFS){
-    
-  exp$event <- DMFS$event
+```
+
+```{r}
+compute_DMFS <- function(exp){
   #Compute percentage DMFS for each group
-  DMFS.low <- (sum(exp[exp$group == "Low",]$event)/length(exp[exp$group == "Low",]$event))
-  DMFS.medium <- (sum(exp[exp$group == "Medium",]$event)/length(exp[exp$group == "Medium",]$event))
-  DMFS.high <- (sum(exp[exp$group == "High",]$event)/length(exp[exp$group == "High",]$event))
+  DMFS.low <- (sum(exp[exp$group == 1,]$DMFS)/length(exp[exp$group == 1,]$DMFS))
+  DMFS.medium <- (sum(exp[exp$group == 2,]$DMFS)/length(exp[exp$group == 2,]$DMFS))
+  DMFS.high <- (sum(exp[exp$group == 3,]$DMFS)/length(exp[exp$group == 3,]$DMFS))
   
   DMFS.groups <- c(DMFS.low,DMFS.medium,DMFS.high)
   DMFS.groups <- 1- DMFS.groups 
@@ -84,79 +85,56 @@ compute_DMFS <- function(exp,DMFS){
   return (DMFS.groups)
 }
 
-compute_DMFS_train<- function(exp,DMFS){
-  #Find tertiles, assign low,medium,high to each group
+assign_exp_group<- function(exp){
+  #Assign low,medium,high to each sample
   exp$sum <- rowMeans(exp)
   tert = quantile(exp$sum, c(0:3/3))
   exp$group = with(exp, cut(sum, tert, include.lowest = T, labels = c("Low", "Medium", "High")))
-  
-  #Compute percentage DMFS for each group
-  #DMFS.groups <- compute_DMFS(exp,DMFS)
-  
-  return (tert)
+
+return (exp$group)
 }
+```
 
-compute_DMFS_test<- function(exp, DMFS, DMFSVal, tert){
-  #Assign low,medium,high to each group
-  exp$sum <- rowMeans(exp)
-  exp$group = with(exp, cut(sum, tert, include.lowest = T, labels = c("Low", "Medium", "High")))
-  
-  #Compute percentage DMFS for each group
-  DMFS.groups <- compute_DMFS(exp,DMFS)
-  
-  #log-rank test
-  fit <- survfit(Surv(DMFSVal$time, DMFS$event)~ group, data = exp)
-  print(autoplot(fit))
-  surv_diff <- survdiff(Surv(DMFSVal$time, DMFS$event)~ group, data = exp)
-  p_value <- 1 - pchisq(surv_diff$chisq, length(surv_diff$n)-1, lower.tail = TRUE)
-
-return (c(DMFS.groups,p_value))
-}
-
-#```{r}
+```{r}
 refine_metagene<- function(exp, genes){
   #Shuffle the data and create fold
   exp <- exp[sample(nrow(exp)),]
   folds <- cut(seq(1,nrow(exp)),breaks=10,labels=FALSE)
   
   #Perform 10 fold CV
-  mean_score <- data.frame(matrix(0, nrow = length(genes)-9, ncol = 4))
-  colnames(mean_score) <- c("DMFS_low", "DMFS_med", "DMFS_high","p_value")
-  rownames(mean_score) <- 10:length(genes)
+  exp_group <- data.frame(matrix(0, nrow = nrow(exp), ncol = length(genes)-9))
+  colnames(exp_group) <- 10:length(genes); rownames(exp_group) <- rownames(exp)
   for(i in 1:10){
-    #Get train and test sets
+    #Get train and test data sets
     testIndexes <- which(folds==i,arr.ind=TRUE)
     testData <- exp[testIndexes, ]
     trainData <- exp[-testIndexes, ]
       
-    #Perform univariate Cox analysis of each gene
+    #Perform univariate Cox analysis of each gene on train set
     ranked_genes <- univariate_Cox(trainData, genes)
 
-    #Try prediction with metagene containing top 10 to all genes
-    score <- data.frame(matrix(0, nrow = length(genes)-9, ncol = 4))
-    colnames(score) <- c("DMFS_low", "DMFS_med", "DMFS_high","p_value")
-    rownames(score) <- 10:length(genes)
+    #Assign group to test sets for each metagene size
     for(N in 10:length(genes)){
-      #Compute tertile and DMFS on train set
-      metagene <- names(ranked_genes)[0:N]
-      DMFS <- data.frame(trainData$DMFS, row.names = rownames(trainData))
-      tert <- compute_DMFS_train(trainData[, metagene], DMFS) 
-      
-      #Compute log-rank p -value on test using obtained tertile of train data
-      DMFS <- data.frame(testData$DMFS, row.names = rownames(testData)); 
-      colnames(DMFS) <- "event"
-      #First 3 index are DMFS score (low,medium,high) and last is p-value
-      DMFS.Val <- data.frame(testData$DMFSVal, row.names = rownames(testData))
-      colnames(DMFS.Val) <- 'time'
-      score.test <- compute_DMFS_test(testData[, metagene], DMFS, DMFS.Val, tert)
-      score$DMFS_low[N-9] <- score.test[[1]]; score$DMFS_med[N-9] <- score.test[[2]]; 
-      score$DMFS_high[N-9]<- score.test[[3]]; score$p_value[N-9] <- score.test[[4]]
+      metagene <- names(ranked_genes)[1:N]
+      exp_group[testIndexes, N-9] <- assign_exp_group(testData[, metagene])
     }
-    mean_score <- mean_score + score
   }
-  mean_score <- (1/10) * mean_score
   
-  return(mean_score)
+  #Compute 5 years DMFS (%) and log-rank test for each size of metagene
+  DMFS_metagenes = c(); p_value = c()
+  for(N in 10:length(genes)){
+    data <- data.frame(exp_group[N-9], exp$DMFS, exp$DMFSVal, row.names = rownames(exp))
+    colnames(data) <- c("group","DMFS", "time")
+    
+    #Compute 5 years DMFS (%)
+    DMFS_metagenes <- append(DMFS_metagenes, compute_DMFS(data))
+  
+    #Log-rank test
+    surv_diff <- survdiff(Surv(time, DMFS)~ group, data = data)
+    p_value <- append(p_value, (1 - pchisq(surv_diff$chisq, length(surv_diff$n)-1, lower.tail = TRUE)))
+  }
+  
+  return(c(DMFS_metagenes, p_value))
 }
 ```
 
@@ -164,25 +142,97 @@ Refine metagene for double negative patients
 ```{r}
 immune_metagenes <- c("CXCL13","PLEK","IFNG","SLAMF7","IL2RB","PRF1","IRF1","PTPN22"   ,"IKZF1","APOBEC3G","IL2RA","ITGAL","CXCL9","GZMA", "GZMB","HLA.E","CCR5","CD8A","SIRPG" ,"CST7","GNLY","CECR1","PNOC","LCP1","HLA.DMB","GIMAP5","SEL1L3","FGL2","BIN2")
 
-mean_score <- data.frame(matrix(0, nrow = 100, ncol = 4))
+#Perform analysis 100 and take mean of DMFS percentage and p-values
+mean_score <- c(0)
 for (i in 1:100){
   mean_score <- mean_score + refine_metagene(exp_doubleneg, immune_metagenes)
 }
 
-mean_score <- (1/100) * mean_score
+mean_score <- mean_score/100
 ```
+```{r}
+#Get best number of genes -> best mean p-value
+N <- 3*(length(immune_metagenes) - 9)
+DMFS_group <- mean_score[1:N]; p_value <- mean_score[N: (N+ N/3)]
+
+min_index = which.min(p_value)
+print(paste("The best N is: ", min_index + 9, ", with p-value of ", min(p_value)))
+DMFS_group[((min_index*3) - 2):(min_index*3)]
+```
+Define the metagene
+```{r}
+ranked_genes <- univariate_Cox(exp_doubleneg, immune_metagenes)
+metagene <- names(ranked_genes)
+
+metagene
+```
+Test refined metagene
+```{r}
+all_data <- exp_doubleneg
+
+#Find tertiles, assign low,medium,high to each group
+all_data$sum <- rowMeans(all_data[,metagene])
+tert = quantile(all_data$sum, c(0:3/3))
+all_data$group = with(all_data, cut(sum, tert, include.lowest = T, labels = c("Low", "Medium", "High")))
+
+#log-rank test
+fit <- survfit(Surv(DMFSVal, DMFS)~ group, data = all_data)
+print(autoplot(fit,  conf.int = F, ylim = c(0, 1), xlab = 'Time(years)', ylab = "DMFS(proportion)"))
+surv_diff <- survdiff(Surv(DMFSVal, DMFS)~ group, data = all_data)
+p_value <- 1 - pchisq(surv_diff$chisq, length(surv_diff$n)-1, lower.tail = TRUE)
+
+print(p_value)
+```
+
 Refine metagene for HER+ patients
 ```{r}
 immune_metagenes <- c("CXCL13","PLEK","IFNG","SLAMF7","IL2RB","PRF1","IRF1","PTPN22"   ,"IKZF1","APOBEC3G","IL2RA","ITGAL","CXCL9","GZMA", "GZMB","HLA.E","CCR5","CD8A","SIRPG" ,"CST7","GNLY","CECR1","PNOC","LCP1","HLA.DMB","GIMAP5","SEL1L3","FGL2","BIN2")
 
 names(exp_HERpos)[names(exp_HERpos) == "HLA-E"] <- "HLA.E"
 names(exp_HERpos)[names(exp_HERpos) == "HLA-DMB"] <- "HLA.DMB"
-mean_score <- data.frame(matrix(0, nrow = 100, ncol = 4))
+#Perform analysis 100 and take mean of DMFS percentage and p-values
+mean_score <- c(0)
 for (i in 1:100){
   mean_score <- mean_score + refine_metagene(exp_HERpos, immune_metagenes)
 }
 
-mean_score <- (1/100) * mean_score
+mean_score <- mean_score/100
+```
+
+```{r}
+#Get best number of genes -> best mean p-value
+N <- 3*(length(immune_metagenes) - 9)
+DMFS_group <- mean_score[1:N]; p_value <- mean_score[N: (N+ N/3)]
+
+min_index = which.min(p_value)
+print(paste("The best N is: ", min_index + 9, ", with p-value of ", min(p_value)))
+DMFS_group[((min_index*3) - 2):(min_index*3)]
+```
+Define the metagene
+```{r}
+ranked_genes <- univariate_Cox(exp_HERpos, immune_metagenes)
+metagene <- names(ranked_genes)[0:(min_index + 9)]
+
+metagene
+```
+
+Test refined metagene
+```{r}
+names(exp_HERpos)[names(exp_HERpos) == "HLA-E"] <- "HLA.E"
+all_data <- exp_HERpos
+
+#Find tertiles, assign low,medium,high to each group
+all_data$sum <- rowMeans(all_data[,metagene])
+tert = quantile(all_data$sum, c(0:3/3))
+all_data$group = with(all_data, cut(sum, tert, include.lowest = T, labels = c("Low", "Medium", "High")))
+
+#log-rank test
+fit <- survfit(Surv(DMFSVal, DMFS)~ group, data = all_data)
+print(autoplot(fit,  conf.int = F, ylim = c(0, 1), xlab = 'Time(years)', ylab = "DMFS(proportion)"))
+surv_diff <- survdiff(Surv(DMFSVal, DMFS)~ group, data = all_data)
+p_value <- 1 - pchisq(surv_diff$chisq, length(surv_diff$n)-1, lower.tail = TRUE)
+
+print(p_value)
 ```
 
 Define and test the consensus T-cell related metagene for double negative and HER+
@@ -194,18 +244,15 @@ all_data <- rbind(exp_doubleneg,exp_HERpos)
 all_data$sum <- rowMeans(all_data[,CTM])
 tert = quantile(all_data$sum, c(0:3/3))
 all_data$group = with(all_data, cut(sum, tert, include.lowest = T, labels = c("Low", "Medium", "High")))
-
-DMFS <- data.frame(all_data$DMFS, row.names = rownames(all_data)); colnames(DMFS) <- "event"
-DMFS.Val <- data.frame(all_data$DMFSVal, row.names = rownames(all_data)); colnames(DMFS.Val) <- 'time'
   
 #Compute percentage DMFS for each group
-DMFS.groups <- compute_DMFS(all_data,DMFS)
+DMFS.groups <- compute_DMFS(all_data)
 
 #log-rank test
 DMFS <- data.frame(all_data$DMFS, row.names = rownames(all_data))
 DMFS.Val <- data.frame(all_data$DMFSVal, row.names = rownames(all_data))
 fit <- survfit(Surv(DMFSVal, DMFS)~ group, data = all_data)
-print(autoplot(fit))
+print(autoplot(fit,  conf.int = F, ylim = c(0, 1), xlab = 'Time(years)', ylab = "DMFS(proportion)"))
 surv_diff <- survdiff(Surv(DMFSVal, DMFS)~ group, data = all_data)
 p_value <- 1 - pchisq(surv_diff$chisq, length(surv_diff$n)-1, lower.tail = TRUE)
 
@@ -222,17 +269,12 @@ all_data$sum <- rowMeans(all_data[,CTM])
 tert = quantile(all_data$sum, c(0:3/3))
 all_data$group = with(all_data, cut(sum, tert, include.lowest = T, labels = c("Low", "Medium", "High")))
 
-DMFS <- data.frame(all_data$DMFS, row.names = rownames(all_data)); colnames(DMFS) <- "event"
-DMFS.Val <- data.frame(all_data$DMFSVal, row.names = rownames(all_data)); colnames(DMFS.Val) <- 'time'
-  
-#Compute percentage DMFS for each group
-DMFS.groups <- compute_DMFS(all_data,DMFS)
 
 #log-rank test
 DMFS <- data.frame(all_data$DMFS, row.names = rownames(all_data))
 DMFS.Val <- data.frame(all_data$DMFSVal, row.names = rownames(all_data))
 fit <- survfit(Surv(DMFSVal, DMFS)~ group, data = all_data)
-print(autoplot(fit))
+print(autoplot(fit,  conf.int = F, ylim = c(0, 1), xlab = 'Time(years)', ylab = "DMFS(proportion)"))
 surv_diff <- survdiff(Surv(DMFSVal, DMFS)~ group, data = all_data)
 p_value <- 1 - pchisq(surv_diff$chisq, length(surv_diff$n)-1, lower.tail = TRUE)
 
@@ -251,17 +293,12 @@ all_data$sum <- rowMeans(all_data[,CTM])
 tert = quantile(all_data$sum, c(0:3/3))
 all_data$group = with(all_data, cut(sum, tert, include.lowest = T, labels = c("Low", "Medium", "High")))
 
-DMFS <- data.frame(all_data$DMFS, row.names = rownames(all_data)); colnames(DMFS) <- "event"
-DMFS.Val <- data.frame(all_data$DMFSVal, row.names = rownames(all_data)); colnames(DMFS.Val) <- 'time'
-  
-#Compute percentage DMFS for each group
-DMFS.groups <- compute_DMFS(all_data,DMFS)
 
 #log-rank test
 DMFS <- data.frame(all_data$DMFS, row.names = rownames(all_data))
 DMFS.Val <- data.frame(all_data$DMFSVal, row.names = rownames(all_data))
 fit <- survfit(Surv(DMFSVal, DMFS)~ group, data = all_data)
-print(autoplot(fit))
+print(autoplot(fit,  conf.int = F, ylim = c(0, 1), xlab = 'Time(years)', ylab = "DMFS(proportion)"))
 surv_diff <- survdiff(Surv(DMFSVal, DMFS)~ group, data = all_data)
 p_value <- 1 - pchisq(surv_diff$chisq, length(surv_diff$n)-1, lower.tail = TRUE)
 

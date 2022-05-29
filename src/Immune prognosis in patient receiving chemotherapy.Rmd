@@ -4,6 +4,9 @@ title: "Immune prognosis"
 
 Define ER and HER metagene for status determination and immune metagene to be refined. Load data.
 ```{r}
+library("survival")
+library(survminer)
+library(ggfortify)
 load(file = '../data/Chemo.rda')
 
 data <- chemo_normalized
@@ -14,12 +17,16 @@ expression$DMFSVal <- outcome
 expression$DMFSVal[expression$DMFSVal > 5] <- 5 
 outcome[outcome <= 5] <- T; outcome[outcome > 5] <- F
 expression$DMFS <- outcome
+
 expression$pcr <- chemo_normalized$pCR
 
+#For table 3, only ... datasets
 #As binary Node pos vs neg
 node <- chemo_normalized$node
-#node[node == "N0"] <- F; node[node == "N1"] <- T; node[node == "N2"] <- T; node[node == "N3"] <- T;
+N0 <- levels(node)[3]
+node[node != N0] <- 1 ; node[node == N0] <- 0;
 expression$node <- node
+expression$node <- droplevels(expression$node)
 
 #As binary grade III vs grade I and II
 grade <- chemo_normalized$grade
@@ -32,16 +39,21 @@ age[age <= 50] <- F; age[age > 50] <- T;
 expression$age <- age
 
 expression$study <- chemo_normalized$StudyID
-expression <-  rbind(expression[expression$study == "GSE41998",],expression[expression$study == "GSE16446",], expression[expression$study == "E_MTAB_365",])
-dim(expression)
-#expression <- na.omit(expression)
+#For logistic regression analysis
+expression <- rbind(expression[expression$study == "GSE41998",], expression[expression$study == "GSE16446",], expression[expression$study == "E_MTAB_365",])
 
-(unique(expression$node)[2])
+#For survival figure 2B, only Patel dataset
+#expression <- expression[expression$study == "E_MTAB_365",]
+
+dim(expression)
+
 
 ```
+
+
 Find ER/HER status. Define ER-HER- and HER2+ expression set. Load specific studies. 
 ```{r}
-CTM <- c("CXCL13","PRF1", "IRF1", "IKZF1", "GZMB", "HLA-E", "DMFSVal", "DMFS","pcr")
+CTM <- c("CXCL13","PRF1", "IRF1", "IKZF1", "GZMB", "HLA-E", "DMFSVal", "DMFS","pcr","node", "grade", "age")
 
 ER_metagene <- c("CCDC170", "ESR1", "ABAT", "SLC39A6", "GATA3", "SCUBE2")
 HER_metagene <- c("ERBB2", "PGAP3", "STARD3", "GRB7", "PNMT", "PSMD3", "GSDMB", "RPL19", "FGFR4", "CAP1")
@@ -128,7 +140,7 @@ DMFS.groups <- compute_DMFS(all_data,DMFS)
 DMFS <- data.frame(all_data$DMFS, row.names = rownames(all_data))
 DMFS.Val <- data.frame(all_data$DMFSVal, row.names = rownames(all_data))
 fit <- survfit(Surv(DMFSVal, DMFS)~ group, data = all_data)
-print(autoplot(fit))
+print(autoplot(fit,  conf.int = F, ylim = c(0, 1), xlab = 'Time(years)', ylab = "DMFS(proportion)"))
 surv_diff <- survdiff(Surv(DMFSVal, DMFS)~ group, data = all_data)
 p_value <- 1 - pchisq(surv_diff$chisq, length(surv_diff$n)-1, lower.tail = TRUE)
 
@@ -156,7 +168,7 @@ DMFS.groups <- compute_DMFS(all_data,DMFS)
 DMFS <- data.frame(all_data$DMFS, row.names = rownames(all_data))
 DMFS.Val <- data.frame(all_data$DMFSVal, row.names = rownames(all_data))
 fit <- survfit(Surv(DMFSVal, DMFS)~ group, data = all_data)
-print(autoplot(fit))
+print(autoplot(fit,  conf.int = F, ylim = c(0, 1), xlab = 'Time(years)', ylab = "DMFS(proportion)"))
 surv_diff <- survdiff(Surv(DMFSVal, DMFS)~ group, data = all_data)
 p_value <- 1 - pchisq(surv_diff$chisq, length(surv_diff$n)-1, lower.tail = TRUE)
 
@@ -192,3 +204,18 @@ p_value <- 1 - pchisq(surv_diff$chisq, length(surv_diff$n)-1, lower.tail = TRUE)
 print(p_value)
 print(DMFS.groups)
 ```
+Multivariate cox regression for ER-/HER- patients
+```{r}
+CTM <- c("CXCL13","PRF1", "IRF1", "IKZF1", "GZMB", "HLA.E")
+all_data <- exp_doubleneg
+
+#Find tertiles, assign low,medium,high to each group
+all_data$sum <- rowMeans(all_data[,CTM])
+tert = quantile(all_data$sum, c(0:3/3))
+all_data$group = with(all_data, cut(sum, tert, include.lowest = T, labels = c("Low", "Medium", "High")))
+
+res.cox <- coxph(Surv(DMFSVal, DMFS) ~ group + node + grade, data =  all_data)
+summary(res.cox)
+
+```
+
