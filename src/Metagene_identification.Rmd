@@ -2,9 +2,11 @@
 title: "Metagene identification"
 output: html_notebook
 ---
+
 Add a new chunk by pressing 'Alt, Ctrl, i'
 
 Load the generic dataset for metagene identification
+
 ```{r}
 library("Biobase")
 set.seed(123)
@@ -21,7 +23,8 @@ test <- expression[split1 == 1,]
 dim(train)
 ```
 
-Cluster the genes using hierarchical clustering with linkage = complete (default) and distance measure =  pearson correlation on the discovery set (train)
+Cluster the genes using hierarchical clustering with linkage = complete (default) and distance measure = pearson correlation on the discovery set (train)
+
 ```{r}
 #Compute pearson correlation and apply hierarchical clustering
 pear_cor <- as.dist(1-abs(cor(train, method = "pearson")))
@@ -30,6 +33,7 @@ dend <- hclust(pear_cor)
 #Cut dendrogram at corr = 0.6 since dist
 gene_clusters <- cutree(dend, h = 0.6)
 ```
+
 ```{r}
 plot(dend)
 ```
@@ -46,7 +50,9 @@ for (i in 1:length(cluster_interest)){
 }
 length(gene_interest) 
 ```
+
 Re-Cluster using same method each cluster and only keep clusters that retained at least 20 genes from original set.
+
 ```{r}
 final_gene_interest <- vector(mode='list')
 u = 1 #current size of final_gene_interest
@@ -78,6 +84,7 @@ final_gene_interest
 ```
 
 Gene ontology analysis
+
 ```{r}
 library(enrichR)
 setEnrichrSite("Enrichr") # Human genes
@@ -91,3 +98,58 @@ if (websiteLive) plotEnrich(enriched[[3]], showTerms = 20, numChar = 40, y = "Co
 
 ```
 
+Try clustering with hclust, but different linkage and correlation measure
+
+```{r}
+#Compute pearson correlation and apply hierarchical clustering
+pear_cor <- as.dist(1-abs(cor(train, method = "spearman")))
+dend <- hclust(pear_cor, method="ward.D")
+
+#Cut dendrogram at corr = 0.6 since dist
+gene_clusters <- cutree(dend, h = 0.6)
+```
+
+```{r}
+#Get cluster of genes (with at least 25 genes)
+size_cluster <-table(unlist(gene_clusters))
+cluster_interest <- rownames(size_cluster[size_cluster  >= 25])
+
+gene_interest <- vector(mode='list', length=length(cluster_interest))
+for (i in 1:length(cluster_interest)){
+  genes <- names(gene_clusters[gene_clusters == cluster_interest[i]])
+  gene_interest[[i]] <- genes
+}
+length(gene_interest) 
+```
+
+Re-Cluster using same method each cluster and only keep clusters that retained at least 20 genes from original set.
+
+```{r}
+final_gene_interest <- vector(mode='list')
+u = 1 #current size of final_gene_interest
+for (i in 1:length(gene_interest)){
+  #Get data with only genes from current re-clustered set
+  clust = test[,gene_interest[[i]]]
+  
+  #Compute pearson correlation and apply hierarchical clustering
+  pear_cor <- as.dist(1-abs(cor(clust, method = "spearman")))
+  dend <- hclust(pear_cor, method="ward.D")
+  
+  #Cut dendrogram at corr = 0.4
+  gene_clusters <- cutree(dend, h = 0.6)
+  
+  #Get cluster of genes (with at least 20 genes)
+  size_cluster <- table(unlist(gene_clusters))
+  cluster_interest <- names(size_cluster[size_cluster  >= 20])
+  
+  if (length(cluster_interest)!= 0){
+  
+    for (j in 1:length(cluster_interest)){
+      genes <- names(gene_clusters[gene_clusters == cluster_interest[j]])
+      final_gene_interest[[u]] <- genes
+      u <- u + 1
+    }
+  }
+}
+final_gene_interest
+```

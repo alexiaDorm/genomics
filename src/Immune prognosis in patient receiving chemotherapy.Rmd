@@ -2,11 +2,15 @@
 title: "Immune prognosis"
 ---
 
-Define ER and HER metagene for status determination and immune metagene to be refined. Load data.
+Load data all relevant data. Comment the appropriate selection of studies depending on the analysis performed.
+
 ```{r}
+
+set.seed(123)
 library("survival")
 library(survminer)
 library(ggfortify)
+
 load(file = '../data/Chemo.rda')
 
 data <- chemo_normalized
@@ -40,18 +44,19 @@ expression$age <- age
 
 expression$study <- chemo_normalized$StudyID
 #For logistic regression analysis
-expression <- rbind(expression[expression$study == "GSE41998",], expression[expression$study == "GSE16446",], expression[expression$study == "E_MTAB_365",])
+#expression <- rbind(expression[expression$study == "GSE41998",], expression[expression$study == "GSE16446",])
 
-#For survival figure 2B, only Patel dataset
-#expression <- expression[expression$study == "E_MTAB_365",]
+#For survival figure 2B, only Patel + desmel dataset
+#expression <- rbind(expression[expression$study == "E_MTAB_365",], expression[expression$study == "GSE16446",])
+
+#For multivariate COX analysis 
+expression <- rbind(expression[expression$study == "GSE41998",],expression[expression$study == "GSE16446",], expression[expression$study == "E_MTAB_365",])
 
 dim(expression)
-
-
 ```
 
+Find ER/HER status. Define ER-HER- and HER2+ expression set. Load specific studies.
 
-Find ER/HER status. Define ER-HER- and HER2+ expression set. Load specific studies. 
 ```{r}
 CTM <- c("CXCL13","PRF1", "IRF1", "IKZF1", "GZMB", "HLA-E", "DMFSVal", "DMFS","pcr","node", "grade", "age")
 
@@ -72,11 +77,14 @@ samples_doubleneg <- names(ER_status[(ER_status + HER_status) == 0])
 exp_doubleneg <- data.frame(expression[samples_doubleneg, CTM])
 samples_HERpos <- names(HER_status[HER_status == 1])
 exp_HERpos <- expression[samples_HERpos, CTM]
+samples_HERneg <- names(HER_status[HER_status == 0])
+exp_HERneg <- expression[samples_HERneg, CTM]
 
-dim(exp_doubleneg); dim(exp_HERpos)
+dim(exp_doubleneg); dim(exp_HERpos); dim(exp_HERneg)
 ```
 
 Assign low, medium, high expression of CTM
+
 ```{r}
 CTM <- c("CXCL13","PRF1", "IRF1", "IKZF1", "GZMB", "HLA.E")
 
@@ -91,36 +99,57 @@ exp_HERpos$group = with(exp_HERpos, cut(sum, tert, include.lowest = T, labels = 
 
 ```
 
-Logistic regression, compute odd ratio, ect.. Coeff return by log regression is the log of the odd. -> odd = exp(coeff) Confidence intreval also exp ???
+Logistic regression, compute odd ratio, ect.. Odd ratio = exp(coeff), CI = exp(coeff+/-1.96\*SE(coeff))
+
 ```{r}
 logis_doubleneg <-glm(pcr ~ group, family=binomial, data=exp_doubleneg)
 summary(logis_doubleneg)
-confint(logis_doubleneg)
 ```
 
 ```{r}
 logis_HERpos <-glm(pcr ~ group, family=binomial, data=exp_HERpos)
 summary(logis_HERpos)
 confint(logis_HERpos)
-```
-```{r}
-compute_DMFS <- function(exp,DMFS){
-    
-  exp$event <- DMFS$event
-  #Compute percentage DMFS for each group
-  DMFS.low <- (sum(exp[exp$group == "Low",]$event)/length(exp[exp$group == "Low",]$event))
-  DMFS.medium <- (sum(exp[exp$group == "Medium",]$event)/length(exp[exp$group == "Medium",]$event))
-  DMFS.high <- (sum(exp[exp$group == "High",]$event)/length(exp[exp$group == "High",]$event))
-  
-  DMFS.groups <- c(DMFS.low,DMFS.medium,DMFS.high)
-  DMFS.groups <- 1- DMFS.groups 
-  DMFS.groups[is.na(DMFS.groups)] <- 0
-  
-  return (DMFS.groups)
-}
+
 ```
 
+```{r}
+# Cochrane data from the 'rmeta'-package
+base_data <- tibble(mean  = c(3.56, 3.03, 7.50, 8.99), 
+                    lower = c(1.69, 1.29, 0.79, 0.93),
+                    upper = c(8.39, 7.09, 71.03, 86.56),
+                    study = c("Auckland", "Block", "Doran", "ff"),
+                    deaths_steroid = c("36", "1", "4", "14"),
+                    deaths_placebo = c("60", "5", "11", "20"),
+                    OR = c("0.58", "0.16", "0.25", "0.70"))
+
+summary <- tibble(mean  = 0.531, 
+                  lower = 0.386,
+                  upper = 0.731,
+                  study = "Summary",
+                  OR = "0.53",
+                  summary = TRUE)
+
+header <- tibble(study = c("", "Study"),
+                 summary = TRUE)
+
+empty_row <- tibble(mean = NA_real_)
+
+cochrane_output_df <- bind_rows(header,
+                                base_data,
+                                empty_row)
+
+cochrane_output_df %>% 
+  forestplot(labeltext = c(study, deaths_steroid, deaths_placebo, OR), 
+             xlog = TRUE, 
+             col = fpColors(box = "royalblue",
+                            line = "darkblue",
+                            summary = "royalblue"))
+```
+
+
 Define and test the consensus T-cell related metagene for double negative and HER+
+
 ```{r}
 CTM <- c("CXCL13","PRF1", "IRF1", "IKZF1", "GZMB", "HLA.E")
 all_data <- rbind(exp_doubleneg,exp_HERpos)
@@ -132,9 +161,7 @@ all_data$group = with(all_data, cut(sum, tert, include.lowest = T, labels = c("L
 
 DMFS <- data.frame(all_data$DMFS, row.names = rownames(all_data)); colnames(DMFS) <- "event"
 DMFS.Val <- data.frame(all_data$DMFSVal, row.names = rownames(all_data)); colnames(DMFS.Val) <- 'time'
-  
-#Compute percentage DMFS for each group
-DMFS.groups <- compute_DMFS(all_data,DMFS)
+
 
 #log-rank test
 DMFS <- data.frame(all_data$DMFS, row.names = rownames(all_data))
@@ -145,10 +172,10 @@ surv_diff <- survdiff(Surv(DMFSVal, DMFS)~ group, data = all_data)
 p_value <- 1 - pchisq(surv_diff$chisq, length(surv_diff$n)-1, lower.tail = TRUE)
 
 print(p_value)
-print(DMFS.groups)
 ```
 
 Only double_neg
+
 ```{r}
 CTM <- c("CXCL13","PRF1", "IRF1", "IKZF1", "GZMB", "HLA.E")
 all_data <- exp_doubleneg
@@ -160,9 +187,6 @@ all_data$group = with(all_data, cut(sum, tert, include.lowest = T, labels = c("L
 
 DMFS <- data.frame(all_data$DMFS, row.names = rownames(all_data)); colnames(DMFS) <- "event"
 DMFS.Val <- data.frame(all_data$DMFSVal, row.names = rownames(all_data)); colnames(DMFS.Val) <- 'time'
-  
-#Compute percentage DMFS for each group
-DMFS.groups <- compute_DMFS(all_data,DMFS)
 
 #log-rank test
 DMFS <- data.frame(all_data$DMFS, row.names = rownames(all_data))
@@ -173,10 +197,10 @@ surv_diff <- survdiff(Surv(DMFSVal, DMFS)~ group, data = all_data)
 p_value <- 1 - pchisq(surv_diff$chisq, length(surv_diff$n)-1, lower.tail = TRUE)
 
 print(p_value)
-print(DMFS.groups)
 ```
 
 Only HER+
+
 ```{r}
 CTM <- c("CXCL13","PRF1", "IRF1", "IKZF1", "GZMB", "HLA.E")
 names(exp_HERpos)[names(exp_HERpos) == "HLA-E"] <- "HLA.E"
@@ -189,22 +213,20 @@ all_data$group = with(all_data, cut(sum, tert, include.lowest = T, labels = c("L
 
 DMFS <- data.frame(all_data$DMFS, row.names = rownames(all_data)); colnames(DMFS) <- "event"
 DMFS.Val <- data.frame(all_data$DMFSVal, row.names = rownames(all_data)); colnames(DMFS.Val) <- 'time'
-  
-#Compute percentage DMFS for each group
-DMFS.groups <- compute_DMFS(all_data,DMFS)
 
 #log-rank test
 DMFS <- data.frame(all_data$DMFS, row.names = rownames(all_data))
 DMFS.Val <- data.frame(all_data$DMFSVal, row.names = rownames(all_data))
 fit <- survfit(Surv(DMFSVal, DMFS)~ group, data = all_data)
-print(autoplot(fit))
+print(autoplot(fit,  conf.int = F, ylim = c(0, 1), xlab = 'Time(years)', ylab = "DMFS(proportion)"))
 surv_diff <- survdiff(Surv(DMFSVal, DMFS)~ group, data = all_data)
 p_value <- 1 - pchisq(surv_diff$chisq, length(surv_diff$n)-1, lower.tail = TRUE)
 
 print(p_value)
-print(DMFS.groups)
 ```
+
 Multivariate cox regression for ER-/HER- patients
+
 ```{r}
 CTM <- c("CXCL13","PRF1", "IRF1", "IKZF1", "GZMB", "HLA.E")
 all_data <- exp_doubleneg
@@ -218,4 +240,3 @@ res.cox <- coxph(Surv(DMFSVal, DMFS) ~ group + node + grade, data =  all_data)
 summary(res.cox)
 
 ```
-

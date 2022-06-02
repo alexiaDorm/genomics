@@ -4,6 +4,8 @@ output: html_document
 ---
 Define ER and HER metagene for status determination and immune metagene to be refined. Load data.
 ```{r}
+set.seed(123)
+
 load(file = '../data/Prognostic.rda')
 ER_metagene <- c("CCDC170", "ESR1", "ABAT", "SLC39A6", "GATA3", "SCUBE2")
 HER_metagene <- c("ERBB2", "PGAP3", "STARD3", "GRB7", "PNMT", "PSMD3", "GSDMB", "RPL19", "FGFR4", "CAP1")
@@ -11,6 +13,8 @@ threshold_ER <- 7.5
 threshold_HER <- 8.35
 
 immune_metagene <- c("CXCL13","PLEK","IFNG","SLAMF7","IL2RB","PRF1","IRF1","PTPN22","IKZF1","APOBEC3G","IL2RA","ITGAL","CXCL9","GZMA","GZMB","HLA-E","CCR5","CD8A","SIRPG","CST7","GNLY","CECR1","PNOC","LCP1","HLA-DMB","GIMAP5","SEL1L3", "FGL2", "BIN2")
+
+print(length(immune_metagene))
 
 data <- prognostic_normalized
 expression <- as.data.frame(t(exprs(data)))
@@ -140,7 +144,7 @@ refine_metagene<- function(exp, genes){
 
 Refine metagene for double negative patients
 ```{r}
-immune_metagenes <- c("CXCL13","PLEK","IFNG","SLAMF7","IL2RB","PRF1","IRF1","PTPN22"   ,"IKZF1","APOBEC3G","IL2RA","ITGAL","CXCL9","GZMA", "GZMB","HLA.E","CCR5","CD8A","SIRPG" ,"CST7","GNLY","CECR1","PNOC","LCP1","HLA.DMB","GIMAP5","SEL1L3","FGL2","BIN2")
+immune_metagenes <- c("CXCL13","PLEK","IFNG","SLAMF7","IL2RB","PRF1","IRF1","PTPN22","IKZF1","APOBEC3G","IL2RA","ITGAL","CXCL9","GZMA","GZMB","HLA.E","CCR5","CD8A","SIRPG","CST7","GNLY","CECR1","PNOC","LCP1","HLA.DMB","GIMAP5","SEL1L3", "FGL2", "BIN2")
 
 #Perform analysis 100 and take mean of DMFS percentage and p-values
 mean_score <- c(0)
@@ -162,7 +166,7 @@ DMFS_group[((min_index*3) - 2):(min_index*3)]
 Define the metagene
 ```{r}
 ranked_genes <- univariate_Cox(exp_doubleneg, immune_metagenes)
-metagene <- names(ranked_genes)
+metagene <- names(ranked_genes)[0:(min_index + 9)]
 
 metagene
 ```
@@ -186,7 +190,7 @@ print(p_value)
 
 Refine metagene for HER+ patients
 ```{r}
-immune_metagenes <- c("CXCL13","PLEK","IFNG","SLAMF7","IL2RB","PRF1","IRF1","PTPN22"   ,"IKZF1","APOBEC3G","IL2RA","ITGAL","CXCL9","GZMA", "GZMB","HLA.E","CCR5","CD8A","SIRPG" ,"CST7","GNLY","CECR1","PNOC","LCP1","HLA.DMB","GIMAP5","SEL1L3","FGL2","BIN2")
+immune_metagenes <- c("CXCL13","PLEK","IFNG","SLAMF7","IL2RB","PRF1","IRF1","PTPN22","IKZF1","APOBEC3G","IL2RA","ITGAL","CXCL9","GZMA","GZMB","HLA.E","CCR5","CD8A","SIRPG","CST7","GNLY","CECR1","PNOC","LCP1","HLA.DMB","GIMAP5","SEL1L3", "FGL2", "BIN2")
 
 names(exp_HERpos)[names(exp_HERpos) == "HLA-E"] <- "HLA.E"
 names(exp_HERpos)[names(exp_HERpos) == "HLA-DMB"] <- "HLA.DMB"
@@ -244,9 +248,6 @@ all_data <- rbind(exp_doubleneg,exp_HERpos)
 all_data$sum <- rowMeans(all_data[,CTM])
 tert = quantile(all_data$sum, c(0:3/3))
 all_data$group = with(all_data, cut(sum, tert, include.lowest = T, labels = c("Low", "Medium", "High")))
-  
-#Compute percentage DMFS for each group
-DMFS.groups <- compute_DMFS(all_data)
 
 #log-rank test
 DMFS <- data.frame(all_data$DMFS, row.names = rownames(all_data))
@@ -257,7 +258,6 @@ surv_diff <- survdiff(Surv(DMFSVal, DMFS)~ group, data = all_data)
 p_value <- 1 - pchisq(surv_diff$chisq, length(surv_diff$n)-1, lower.tail = TRUE)
 
 print(p_value)
-print(DMFS.groups)
 ```
 Only double_neg
 ```{r}
@@ -279,7 +279,6 @@ surv_diff <- survdiff(Surv(DMFSVal, DMFS)~ group, data = all_data)
 p_value <- 1 - pchisq(surv_diff$chisq, length(surv_diff$n)-1, lower.tail = TRUE)
 
 print(p_value)
-print(DMFS.groups)
 ```
 
 Only HER+
